@@ -1,16 +1,20 @@
 import streamlit as st
 import tempfile
 import os
-from jamai import Jamai
+from jamaibase import Jamai
 
 # --- CONFIGURATION ---
 # REPLACE THESE WITH YOUR ACTUAL CREDENTIALS
-PROJECT_ID = "YOUR_PROJECT_ID_HERE"
-PAT_KEY = "YOUR_PAT_KEY_HERE"
+PROJECT_ID = "proj_cbb373ee0918dc48e8a09c69 "
+PAT_KEY = "jamai_pat_adf3eaec83074e0cd99cfa0d7a2d2ecdf97107f3705bf306"
 
-# Default Table IDs (Change these if your table IDs are different in Jamai)
-TABLE_ID_SINGLE = "action-table-single"
-TABLE_ID_MULTI = "action-table-multi"
+# --- ACTION TABLE IDS ---
+# REPLACE THESE WITH YOUR 3 SINGLE-INPUT TABLE IDs
+TABLE_ID_TEXT = "text%20received"
+TABLE_ID_AUDIO = "audio_receive"
+TABLE_ID_PHOTO = "picture%20receipt"
+# This is the ID for the multi-input table (from the previous example)
+TABLE_ID_MULTI = "combined"   
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -53,32 +57,35 @@ st.caption("AI Emergency Response Navigator")
 tab1, tab2 = st.tabs(["Single Modality Analysis", "Multi-Modality Fusion"])
 
 # ==========================================
-# TAB 1: SINGLE INPUT ACTION TABLE
+# TAB 1: THREE SEPARATE SINGLE INPUT ACTION TABLES
 # ==========================================
 with tab1:
-    st.header("Single Input Analysis")
-    st.info(f"Connected to Table: `{TABLE_ID_SINGLE}`")
+    st.header("Single Input Analysis (3 Dedicated Tables)")
+    st.info("Input will be sent to one of the following tables based on the selection: "
+            f"`{TABLE_ID_TEXT}`, `{TABLE_ID_AUDIO}`, or `{TABLE_ID_PHOTO}`.")
     
     input_type = st.radio("Select Input Type", ["Text", "Audio", "Photo"], horizontal=True)
     
     user_data = {}
+    table_id_to_use = None
     ready_to_send = False
 
-    # Input Logic
+    # --- Input and Routing Logic ---
     if input_type == "Text":
         text_input = st.text_area("Describe the emergency situation:")
         if text_input:
-            user_data = {"text": text_input} 
+            user_data = {"text": text_input} # Assuming your text table column is named 'text'
+            table_id_to_use = TABLE_ID_TEXT
             ready_to_send = True
 
     elif input_type == "Audio":
         audio_file = st.file_uploader("Upload Audio Recording", type=["mp3", "wav", "m4a"])
         if audio_file:
             path = save_uploaded_file(audio_file)
-            # Upload to Jamai to get URI
+            table_id_to_use = TABLE_ID_AUDIO
             with st.spinner("Uploading audio..."):
                 uploaded_uri = jamai.file.upload_file(path).uri
-            user_data = {"audio": uploaded_uri}
+            user_data = {"audio": uploaded_uri} # Assuming your audio table column is named 'audio'
             ready_to_send = True
 
     elif input_type == "Photo":
@@ -86,24 +93,25 @@ with tab1:
         if photo_file:
             path = save_uploaded_file(photo_file)
             st.image(photo_file, caption="Preview", width=300)
-            # Upload to Jamai to get URI
+            table_id_to_use = TABLE_ID_PHOTO
             with st.spinner("Uploading photo..."):
                 uploaded_uri = jamai.file.upload_file(path).uri
-            user_data = {"photo": uploaded_uri}
+            user_data = {"photo": uploaded_uri} # Assuming your photo table column is named 'photo'
             ready_to_send = True
 
+    # --- Execution ---
     if st.button("Analyze Single Input", disabled=not ready_to_send):
-        with st.spinner("Consulting AERN Brain..."):
+        with st.spinner(f"Consulting AERN Brain via table: {table_id_to_use}..."):
             try:
-                # Add row to Jamai Table
+                # Use the dynamically selected table_id
                 response = jamai.table.add_row(
-                    table_id=TABLE_ID_SINGLE,
+                    table_id=table_id_to_use,
                     data=user_data,
                     stream=False
                 )
                 
                 if response:
-                    # Dynamic retrieval of columns
+                    # Output columns are assumed to be 'description' and 'summary'
                     desc = response.row.get("description", "No description generated")
                     summary = response.row.get("summary", "No summary generated")
                     
@@ -114,13 +122,15 @@ with tab1:
                     st.success(summary)
             except Exception as e:
                 st.error(f"An error occurred: {e}")
+                st.write("Ensure the correct Table ID and column names are configured for the selected input type.")
+
 
 # ==========================================
-# TAB 2: MULTI INPUT ACTION TABLE
+# TAB 2: MULTI INPUT ACTION TABLE (REMAINS THE SAME)
 # ==========================================
 with tab2:
     st.header("Multi-Modality Fusion")
-    st.info(f"Connected to Table: `{TABLE_ID_MULTI}`")
+    st.info(f"Connected to Table: `{TABLE_ID_MULTI}` (Assumes one table handles all 3 inputs)")
     
     col1, col2 = st.columns(2)
     
