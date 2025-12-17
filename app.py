@@ -427,8 +427,8 @@ with tab_chat:
         st.session_state.chat_history.append({"role": "user", "content": prompt})
         st.chat_message("user").write(prompt)
 
-        # Prepare data row to send - adjust column name 'text' to match your table
-        data = {"text": prompt}
+        # Prepare data row to send - adjust column name 'chat' to match your table
+        data = {"chat": prompt}
 
         with st.spinner("Contacting AI assistant..."):
             try:
