@@ -766,4 +766,4 @@ with tab_chat:
 # FOOTER
 # =============================================================================
 st.divider()
-st.caption("🚨 AERN - AI Emergency Response Navigator | Powered by JamAI")
+st.caption("🚨 AERN - AI Emergency Response Navigator ")
