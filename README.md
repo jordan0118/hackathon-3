@@ -1,5 +1,5 @@
 # AI Emergency Response Navigator (AERN)
-### TEAM: INSOMIA
+### TEAM: INSOMIAC
 
 ---
 ## ⭐ Overview
