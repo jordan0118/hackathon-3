@@ -3,6 +3,7 @@ import tempfile
 import os
 import time
 from jamaibase import JamAI
+from jamaibase.protocol import MultiRowAddRequest
 
 # =============================================================================
 # PAGE CONFIGURATION
@@ -199,26 +200,18 @@ def add_table_row(table_id, row_data):
         raise RuntimeError("JamAI client not initialized")
     
     try:
-        # Try with 'data' parameter first (newer SDK versions)
-        response = jamai_client.table.add_table_rows(
-            table_type="action",
+        # Create proper MultiRowAddRequest object
+        request = MultiRowAddRequest(
             table_id=table_id,
             data=[row_data],
             stream=False
         )
+        
+        response = jamai_client.table. add_table_rows(
+            table_type="action",
+            request=request
+        )
         return response
-    except TypeError:
-        # Fallback to 'rows' parameter for compatibility with older SDK versions
-        try:
-            response = jamai_client.table.add_table_rows(
-                table_type="action",
-                table_id=table_id,
-                rows=[row_data],
-                stream=False
-            )
-            return response
-        except Exception as e:
-            raise RuntimeError(f"Failed to add table row: {e}")
     except Exception as e:
         raise RuntimeError(f"Failed to add table row: {e}")
 
