@@ -1,713 +1,202 @@
 import streamlit as st
-import tempfile
-import os
-import time
-from jamaibase import JamAI
-from jamaibase.protocol import MultiRowAddRequest
+import anthropic
+import json
+from datetime import datetime
 
-# =============================================================================
-# PAGE CONFIGURATION
-# =============================================================================
-st. set_page_config(
-    page_title="AERN | AI Emergency Response Navigator",
-    page_icon="🚨",
-    layout="wide"
-)
+# Initialize Anthropic client
+client = anthropic.Anthropic()
 
-# Custom CSS for emergency response theme
+# Page configuration
+st.set_page_config(page_title="Emergency Response & Self-Care AI", layout="wide")
+
+# Custom CSS for better UI
 st.markdown("""
-<style>
-    .stButton>button {
-        height: 3em;
-        width: 100%;
-        border-radius: 10px;
-        font-weight: bold;
-        font-size: 20px;
+    <style>
+    .emergency-box {
+        background-color: #fff3cd;
+        border-left: 4px solid #ff6b6b;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 10px 0;
     }
-    .stChatMessage {
-        border-radius: 15px;
-        padding: 10px;
+    .guidance-box {
+        background-color: #d4edda;
+        border-left: 4px solid #28a745;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 10px 0;
     }
-    .emergency-button {
-        background-color: #ff4444;
-        color: white;
-        padding: 20px;
-        border-radius: 15px;
-        font-size: 24px;
-        font-weight:  bold;
-        margin:  10px;
+    .self-care-box {
+        background-color: #e7f3ff;
+        border-left: 4px solid #0066cc;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 10px 0;
     }
-</style>
-""", unsafe_allow_html=True)
+    </style>
+    """, unsafe_allow_html=True)
 
-# =============================================================================
-# SECRETS AND CREDENTIALS LOADING
-# =============================================================================
-def load_secrets():
-    """Load secrets from . streamlit/secrets.toml or environment variables"""
-    # Try Streamlit secrets first
-    api_key = None
-    project_id = None
-    table_text_id = None
-    table_audio_id = None
-    table_photo_id = None
-    table_multi_id = None
-    table_chat_id = None
+def get_emergency_guidance(emergency_type: str) -> str:
+    """Get AI-powered guidance for emergency situations"""
     
-    # Load from Streamlit secrets
-    if hasattr(st, "secrets") and st.secrets:
-        api_key = st.secrets.get("JAMAI_API_KEY") or st.secrets.get("JAMAI_PAT_KEY")
-        project_id = st.secrets.get("PROJECT_ID") or st.secrets.get("JAMAI_PROJECT_ID")
-        table_text_id = st. secrets.get("TABLE_TEXT_ID")
-        table_audio_id = st.secrets.get("TABLE_AUDIO_ID")
-        table_photo_id = st.secrets.get("TABLE_PHOTO_ID")
-        table_multi_id = st.secrets.get("TABLE_MULTI_ID")
-        table_chat_id = st.secrets.get("TABLE_CHAT_ID")
+    prompt = f"""You are an emergency response AI assistant. A person is experiencing a {emergency_type} emergency.
     
-    # Fallback to environment variables
-    if not api_key:
-        api_key = os.getenv("JAMAI_API_KEY") or os.getenv("JAMAI_PAT_KEY")
-    if not project_id:
-        project_id = os.getenv("PROJECT_ID") or os.getenv("JAMAI_PROJECT_ID")
-    
-    # Fallback table IDs (clean names without URL encoding)
-    table_text_id = table_text_id or os.getenv("TABLE_TEXT_ID") or "text_received"
-    table_audio_id = table_audio_id or os.getenv("TABLE_AUDIO_ID") or "audio_receive"
-    table_photo_id = table_photo_id or os.getenv("TABLE_PHOTO_ID") or "picture_receipt"
-    table_multi_id = table_multi_id or os.getenv("TABLE_MULTI_ID") or "combined"
-    table_chat_id = table_chat_id or os. getenv("TABLE_CHAT_ID") or "chat"
-    
-    return {
-        "api_key": api_key. strip() if api_key else None,
-        "project_id": project_id.strip() if project_id else None,
-        "tables": {
-            "text": table_text_id,
-            "audio": table_audio_id,
-            "photo":  table_photo_id,
-            "multi": table_multi_id,
-            "chat": table_chat_id
-        }
-    }
+Provide immediate, practical guidance for handling this emergency. Include:
+1. Immediate steps to take (first 5 minutes)
+2. Safety considerations
+3. When and how to contact professional help
+4. Important precautions to avoid making the situation worse
 
-config = load_secrets()
-API_KEY = config["api_key"]
-PROJECT_ID = config["project_id"]
-TABLE_IDS = config["tables"]
-
-# =============================================================================
-# JAMAI CLIENT INITIALIZATION
-# =============================================================================
-jamai_client = None
-if API_KEY and PROJECT_ID:
-    try:
-        jamai_client = JamAI(token=API_KEY, project_id=PROJECT_ID)
-        st.sidebar.success("✅ Connected to JamAI")
-    except Exception as e:
-        st.sidebar.error(f"❌ JamAI Connection Failed: {e}")
-        jamai_client = None
-else:
-    st.sidebar. warning("⚠️ JamAI credentials not configured")
-
-# =============================================================================
-# HELPER FUNCTIONS
-# =============================================================================
-
-def save_uploaded_file(uploaded_file):
-    """Save uploaded file to temporary location"""
-    try:
-        suffix = f".{uploaded_file.name. split('.')[-1]}" if "." in uploaded_file.name else ""
-        with tempfile. NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
-            tmp_file. write(uploaded_file.getvalue())
-            return tmp_file.name
-    except Exception as e:
-        st.error(f"Error saving file: {e}")
-        return None
-
-def cleanup_temp_file(file_path):
-    """Clean up temporary file"""
-    try: 
-        if file_path and os.path.exists(file_path):
-            os.remove(file_path)
-    except Exception: 
-        pass
-
-def extract_uri_from_response(response):
-    """Extract URI from JamAI upload response"""
-    if response is None:
-        return None
-    if isinstance(response, dict):
-        return response.get("uri") or response.get("url")
-    if hasattr(response, "uri"):
-        return getattr(response, "uri", None)
-    if hasattr(response, "url"):
-        return getattr(response, "url", None)
-    return None
-
-def parse_response_data(response):
-    """Parse JamAI response to extract row data"""
-    if response is None:
-        return {}
+Keep the response concise, actionable, and calm in tone. Format with clear sections."""
     
-    # Handle list responses
-    if isinstance(response, list) and response:  
-        response = response[0]
-    
-    # Handle dict responses
-    if isinstance(response, dict):
-        # Check for common patterns
-        if "row" in response:  
-            return parse_response_data(response["row"])
-        if "rows" in response and isinstance(response["rows"], list) and response["rows"]:
-            return parse_response_data(response["rows"][0])
-        if "values" in response and isinstance(response["values"], dict):
-            return response["values"]
-        if "data" in response and isinstance(response["data"], dict):
-            return response["data"]
-        if "columns" in response and isinstance(response["columns"], dict):
-            return response["columns"]
-        return response
-    
-    # Handle object responses
-    if hasattr(response, "rows"):
-        rows = getattr(response, "rows")
-        if isinstance(rows, list) and rows:
-            first_row = rows[0]
-            # Extract columns from the row
-            if hasattr(first_row, "columns"):
-                return parse_columns_data(first_row.columns)
-            return parse_response_data(first_row)
-    
-    if hasattr(response, "columns"):
-        return parse_columns_data(response. columns)
-    
-    if hasattr(response, "__dict__"):
-        return parse_response_data(getattr(response, "__dict__", {}))
-    
-    return {}
-
-def parse_columns_data(columns):
-    """Extract text content from columns data structure"""
-    result = {}
-    
-    if isinstance(columns, dict):
-        for col_name, col_value in columns.items():
-            # Extract text from column value
-            if isinstance(col_value, dict):
-                result[col_name] = col_value.get("text") or col_value.get("value") or str(col_value)
-            elif hasattr(col_value, "text"):
-                result[col_name] = col_value.text
-            elif hasattr(col_value, "value"):
-                result[col_name] = col_value.value
-            else:
-                result[col_name] = str(col_value)
-    
-    return result
-
-def get_field_value(data, field_name, default=None):
-    """Safely extract field value from response data"""
-    if not isinstance(data, dict):
-        return default
-    
-    # Direct lookup
-    if field_name in data:
-        value = data[field_name]
-        
-        # If value is a ChatCompletion object, extract the content
-        if hasattr(value, "choices") and value.choices:
-            try:
-                return value.choices[0].message.content
-            except (AttributeError, IndexError):
-                pass
-        
-        # If value is a dict with ChatCompletion structure
-        if isinstance(value, dict) and "choices" in value:
-            try:  
-                choices = value["choices"]
-                if isinstance(choices, list) and choices:
-                    first_choice = choices[0]
-                    if isinstance(first_choice, dict) and "message" in first_choice:
-                        return first_choice["message"]. get("content")
-                    elif hasattr(first_choice, "message"):
-                        return first_choice.message.content
-            except (AttributeError, IndexError, KeyError):
-                pass
-        
-        # If it's already a string, return it
-        if isinstance(value, str):
-            return value if value else default
-        
-        # Convert to string if needed
-        return str(value) if value is not None else default
-    
-    # Recursive search for nested structures
-    for key, value in data.items():
-        if isinstance(value, dict) and field_name in value:
-            return get_field_value({"field": value[field_name]}, "field", default)
-    
-    return default
-
-def add_table_row(table_id, row_data):
-    """Add a row to a JamAI Action Table"""
-    if jamai_client is None:
-        raise RuntimeError("JamAI client not initialized")
-    
-    try:
-        # Create proper MultiRowAddRequest object
-        request = MultiRowAddRequest(
-            table_id=table_id,
-            data=[row_data],
-            stream=False
-        )
-        
-        response = jamai_client.table. add_table_rows(
-            table_type="action",
-            request=request
-        )
-        return response
-    except Exception as e: 
-        raise RuntimeError(f"Failed to add table row: {e}")
-
-def list_action_tables():
-    """List all available Action Tables"""
-    if jamai_client is None:
-        return []
-    
-    try: 
-        response = jamai_client. table.list_tables(table_type="action")
-        if hasattr(response, "items"):
-            return [table. id for table in response.items]
-        return []
-    except Exception as e:
-        st.error(f"Error listing tables: {e}")
-        return []
-
-def get_table_schema(table_id):
-    """Get schema information for a table"""
-    if jamai_client is None:
-        return None
-    
-    try: 
-        response = jamai_client. table.get_table(table_type="action", table_id=table_id)
-        return response
-    except Exception as e:
-        st.error(f"Error getting table schema: {e}")
-        return None
-
-# =============================================================================
-# PAGE HEADER
-# =============================================================================
-st.title("🚨 AERN - AI Emergency Response Navigator")
-st.markdown("""
-**AI-Powered Emergency Response System** — AERN uses advanced AI to analyze emergency situations 
-in real-time through text, audio, and images.  Get instant situational assessments, 
-recommended actions, and connect with emergency services faster. 
-""")
-
-st.divider()
-
-# =============================================================================
-# SIDEBAR - DEBUG AND CONFIGURATION
-# =============================================================================
-with st.sidebar:
-    st. header("⚙️ System Configuration")
-    
-    # Credentials status
-    with st.expander("🔑 Credentials Status", expanded=False):
-        st.write(f"**API Key:** {'✅ Loaded' if API_KEY else '❌ Missing'}")
-        st.write(f"**Project ID:** {PROJECT_ID if PROJECT_ID else '❌ Missing'}")
-    
-    # Table IDs
-    with st.expander("📋 Table Configuration", expanded=False):
-        st.write("**Configured Table IDs:**")
-        for key, value in TABLE_IDS. items():
-            st.code(f"{key}: {value}")
-    
-    # List available tables
-    if st.button("🔍 List Available Action Tables"):
-        with st.spinner("Fetching tables..."):
-            tables = list_action_tables()
-            if tables:
-                st.success(f"Found {len(tables)} tables:")
-                for table in tables: 
-                    st.write(f"• {table}")
-            else:
-                st.info("No tables found or unable to connect")
-    
-    # Schema Inspector
-    st.markdown("### 🔬 Schema Inspector")
-    inspect_table = st.selectbox(
-        "Select table to inspect:",
-        options=list(TABLE_IDS.keys()),
-        format_func=lambda x: f"{x. upper()} ({TABLE_IDS[x]})"
+    message = client.messages.create(
+        model="claude-3-5-sonnet-20241022",
+        max_tokens=1024,
+        messages=[
+            {"role": "user", "content": prompt}
+        ]
     )
     
-    if st.button("Inspect Schema"):
-        table_id = TABLE_IDS[inspect_table]
-        with st.spinner(f"Inspecting {table_id}..."):
-            schema = get_table_schema(table_id)
-            if schema:
-                st.success("Schema retrieved!")
-                
-                # Display input columns
-                if hasattr(schema, "cols") and schema.cols:
-                    st.write("**Input Columns:**")
-                    for col in schema.cols:
-                        st.write(f"• {col.id} ({col.dtype})")
-                
-                # Display output columns
-                if hasattr(schema, "chat_cols") and schema.chat_cols:
-                    st.write("**Output Columns:**")
-                    for col in schema.chat_cols:
-                        st. write(f"• {col. id} ({col.dtype})")
-                
-                with st.expander("Raw Schema Data"):
-                    st.write(schema)
-            else:
-                st. error("Failed to retrieve schema")
+    return message.content[0].text
 
-# =============================================================================
-# MAIN TABS
-# =============================================================================
-tab_emergency, tab_multi, tab_chat = st.tabs([
-    "🔥 Emergency Response",
-    "🔀 Multi-Modality Fusion",
-    "💬 AI Chat Assistant"
-])
+def get_self_care_recommendations(concern: str) -> str:
+    """Get personalized self-care recommendations"""
+    
+    prompt = f"""You are a compassionate wellness coach. Someone is dealing with: {concern}
+    
+Provide 5-7 practical self-care recommendations that include:
+- Mental/emotional practices
+- Physical wellness activities
+- Social/connection strategies
+- Professional resources if needed
 
-# =============================================================================
-# TAB 1: EMERGENCY RESPONSE
-# =============================================================================
-with tab_emergency:
-    st.header("⚡ Quick Emergency Response")
-    st.info("Select your emergency type for rapid assessment and guidance")
+Make recommendations specific, actionable, and encouraging. Keep the tone supportive."""
     
-    # Emergency type buttons
-    col1, col2, col3 = st.columns(3)
+    message = client.messages.create(
+        model="claude-3-5-sonnet-20241022",
+        max_tokens=1024,
+        messages=[
+            {"role": "user", "content": prompt}
+        ]
+    )
     
-    emergency_selected = None
+    return message.content[0].text
+
+def main():
+    st.title("🆘 Emergency Response & 💝 Self-Care AI Assistant")
     
-    with col1:
-        if st.button("🌊 Flood", use_container_width=True):
-            emergency_selected = "Flood"
-        if st.button("🏥 Medical Emergency", use_container_width=True):
-            emergency_selected = "Medical Emergency"
+    # Sidebar for navigation
+    page = st.sidebar.radio("Choose a service:", 
+                           ["Emergency Response", "Self-Care Support"])
     
-    with col2:
-        if st.button("🔥 Fire", use_container_width=True):
-            emergency_selected = "Fire"
-        if st.button("🌪️ Natural Disaster", use_container_width=True):
-            emergency_selected = "Natural Disaster"
-    
-    with col3:
-        if st.button("🚗 Accident", use_container_width=True):
-            emergency_selected = "Accident"
-        if st.button("🏢 Building Emergency", use_container_width=True):
-            emergency_selected = "Building Emergency"
-    
-    if emergency_selected:
-        st. markdown(f"### Selected: **{emergency_selected}**")
+    if page == "Emergency Response":
+        st.header("🆘 Emergency Response Guidance")
+        st.markdown("Select your emergency type to receive immediate AI guidance.")
         
-        # Emergency input form
-        with st.form(key="emergency_form"):
-            st.write("Provide additional details:")
-            
-            # Text input
-            emergency_text = st.text_area(
-                "Describe the situation:",
-                placeholder=f"Example: {emergency_selected} emergency at my location..."
+        # Emergency types with immediate processing
+        emergency_types = [
+            "Medical Emergency (chest pain, severe bleeding, etc.)",
+            "Mental Health Crisis (severe anxiety, suicidal thoughts)",
+            "Fire or Smoke",
+            "Vehicle Accident",
+            "Poisoning or Overdose",
+            "Severe Allergic Reaction",
+            "Active Violence or Threat",
+            "Natural Disaster",
+            "Carbon Monoxide Exposure",
+            "Severe Injury or Trauma"
+        ]
+        
+        # Create columns for emergency type selection
+        col1, col2 = st.columns(2)
+        
+        selected_emergency = None
+        
+        with col1:
+            selected_emergency = st.selectbox(
+                "Select Emergency Type:",
+                options=emergency_types,
+                label_visibility="collapsed"
             )
-            
-            # Optional file uploads
-            col_a, col_b = st.columns(2)
-            with col_a:
-                emergency_audio = st.file_uploader(
-                    "Optional: Audio recording",
-                    type=["mp3", "wav", "m4a"],
-                    key="emerg_audio"
-                )
-            with col_b:
-                emergency_photo = st.file_uploader(
-                    "Optional: Scene photo",
-                    type=["jpg", "png", "jpeg"],
-                    key="emerg_photo"
-                )
-                if emergency_photo:
-                    st.image(emergency_photo, width=200)
-            
-            submit_emergency = st.form_submit_button("🚨 SUBMIT EMERGENCY REPORT", use_container_width=True)
         
-        if submit_emergency:
-            # Determine which table to use based on inputs
-            if emergency_audio or emergency_photo:
-                # Use multi-modal table
-                table_id = TABLE_IDS["multi"]
-                st.info(f"Using multi-modal table: {table_id}")
-                
-                emergency_data = {}
-                
-                # Add text
-                if emergency_text:
-                    emergency_data["text"] = f"[{emergency_selected}] {emergency_text}"
-                
-                # Upload audio
-                if emergency_audio: 
-                    temp_audio = save_uploaded_file(emergency_audio)
-                    if temp_audio and jamai_client:
-                        try:
-                            upload_resp = jamai_client.file.upload_file(temp_audio)
-                            uri = extract_uri_from_response(upload_resp)
-                            if uri:
-                                emergency_data["audio text"] = uri
-                        except Exception as e: 
-                            st.error(f"Audio upload failed: {e}")
-                        finally:
-                            cleanup_temp_file(temp_audio)
-                
-                # Upload photo
-                if emergency_photo: 
-                    temp_photo = save_uploaded_file(emergency_photo)
-                    if temp_photo and jamai_client:
-                        try:
-                            upload_resp = jamai_client.file.upload_file(temp_photo)
-                            uri = extract_uri_from_response(upload_resp)
-                            if uri: 
-                                emergency_data["image"] = uri
-                        except Exception as e:
-                            st.error(f"Photo upload failed: {e}")
-                        finally: 
-                            cleanup_temp_file(temp_photo)
-                
-            else:
-                # Use text-only table
-                table_id = TABLE_IDS["text"]
-                st.info(f"Using text table: {table_id}")
-                # Note: text_received table uses 'text_receive' column, different from combined table's 'text' column
-                emergency_data = {"text_receive": f"[{emergency_selected}] {emergency_text}"}
+        # Immediately process when selection changes
+        if selected_emergency:
+            st.markdown('<div class="emergency-box">', unsafe_allow_html=True)
+            st.warning(f"⚠️ **Emergency Type:** {selected_emergency}")
+            st.markdown('</div>', unsafe_allow_html=True)
             
-            # Submit to JamAI
-            if emergency_data:
-                with st.spinner("🚨 Processing emergency report..."):
-                    try:
-                        if jamai_client:
-                            response = add_table_row(table_id, emergency_data)
-                            data = parse_response_data(response)
-                            # Display results
-                            st.success("✅ Emergency Report Processed")
-
-                            description = get_field_value(data, "description", "No description available")
-                            summary = get_field_value(data, "summary", "No summary available")
-
-                            st.subheader("📋 Situation Assessment")
-                            st.markdown(f"**{description}**")
-
-                            st.divider()
-
-                            st.subheader("🚨 Recommended Actions")
-                            st.warning(summary)  # Changed from st.info to st.warning for urgency
-
-                            # Optional: Add action buttons based on the analysis
-                            col1, col2, col3 = st.columns(3)
-                            with col1:
-                                st.button("📞 Call Emergency Services", type="primary", use_container_width=True)
-                            with col2:
-                                st.button("📍 Share Location", use_container_width=True)
-                            with col3:
-                                st.button("👥 Alert Contacts", use_container_width=True)
-
-                            # Keep debug data hidden by default
-                            with st.expander("🔍 Debug Data (Developer Only)"):
-                                st.json(data)
-                        else: 
-                            st.error("JamAI client not available")
-                    except Exception as e: 
-                        st.error(f"Error processing emergency:  {e}")
-            else:
-                st.warning("Please provide emergency details")
-
-# =============================================================================
-# TAB 2: MULTI-MODALITY FUSION
-# =============================================================================
-with tab_multi:
-    st.header("🔀 Multi-Modality Fusion")
-    st.info(f"Combine multiple inputs for comprehensive analysis (Table: {TABLE_IDS['multi']})")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        multi_text = st.text_area("Text Description:", height=150)
-        multi_audio = st.file_uploader(
-            "Audio Input:",
-            type=["mp3", "wav", "m4a"],
-            key="multi_audio"
-        )
-    
-    with col2:
-        multi_photo = st.file_uploader(
-            "Photo Input:",
-            type=["jpg", "png", "jpeg"],
-            key="multi_photo"
-        )
-        if multi_photo:
-            st. image(multi_photo, caption="Preview", width=200)
-    
-    if st.button("🔀 Analyze Combined Data", use_container_width=True):
-        if not (multi_text or multi_audio or multi_photo):
-            st.error("Please provide at least one input")
-        else:
-            multi_data = {}
+            # Show loading state while generating guidance
+            with st.spinner("🤖 Generating immediate guidance..."):
+                guidance = get_emergency_guidance(selected_emergency)
             
-            # Add text
-            if multi_text:
-                multi_data["text"] = multi_text
+            # Display guidance in a highlighted box
+            st.markdown('<div class="guidance-box">', unsafe_allow_html=True)
+            st.markdown("### 📋 Immediate Guidance")
+            st.markdown(guidance)
+            st.markdown('</div>', unsafe_allow_html=True)
             
-            # Upload audio
-            if multi_audio: 
-                temp_audio = save_uploaded_file(multi_audio)
-                if temp_audio and jamai_client:
-                    try:
-                        upload_resp = jamai_client.file.upload_file(temp_audio)
-                        uri = extract_uri_from_response(upload_resp)
-                        if uri:
-                            multi_data["audio text"] = uri
-                    except Exception as e:
-                        st.error(f"Audio upload failed: {e}")
-                    finally: 
-                        cleanup_temp_file(temp_audio)
+            # Emergency contacts reminder
+            st.markdown("---")
+            st.info("""
+            **📞 Emergency Contacts:**
+            - Emergency Services (Life-threatening): **911** (US) or your local emergency number
+            - National Suicide Prevention Lifeline: **988** (US)
+            - Crisis Text Line: Text **HOME** to **741741**
+            """)
             
-            # Upload photo
-            if multi_photo:
-                temp_photo = save_uploaded_file(multi_photo)
-                if temp_photo and jamai_client:
-                    try:
-                        upload_resp = jamai_client.file.upload_file(temp_photo)
-                        uri = extract_uri_from_response(upload_resp)
-                        if uri: 
-                            multi_data["image"] = uri
-                    except Exception as e:
-                        st. error(f"Photo upload failed:  {e}")
-                    finally: 
-                        cleanup_temp_file(temp_photo)
-            
-            # Submit to JamAI
-            if multi_data:
-                with st.spinner("Processing multi-modal data..."):
-                    try:
-                        if jamai_client: 
-                            response = add_table_row(TABLE_IDS["multi"], multi_data)
-                            data = parse_response_data(response)
-                            
-                            # Display results
-                            st.success("✅ Multi-Modal Analysis Complete")
-
-                            description = get_field_value(data, "description", "No description available")
-                            summary = get_field_value(data, "summary", "No summary available")
-
-                            # Create a more visual layout
-                            st.markdown("### 🔍 Integrated Analysis")
-
-                            # Use columns for better layout
-                            col1, col2 = st.columns([2, 1])
-
-                            with col1:
-                                st.markdown("#### 📋 Situation Assessment")
-                                st.info(description)
-                                
-                                st.markdown("#### 🚨 Safety Recommendations")
-                                st.warning(summary)
-
-                            with col2:
-                                st.markdown("#### 📊 Analysis Summary")
-                                st.metric("Input Types", len([k for k in multi_data. keys()]))
-                                st.metric("Confidence", "High ✅")
-                                st.button("📞 Emergency Services", type="primary", use_container_width=True)
-                                st.button("📍 Share Location", use_container_width=True)
-
-                            with st.expander("🔧 Debug Information"):
-                                st.json(data)
-                        else:
-                            st.error("JamAI client not available")
-                    except Exception as e:
-                        st.error(f"Multi-modal analysis error: {e}")
-
-# =============================================================================
-# TAB 3: AI CHAT ASSISTANT
-# =============================================================================
-with tab_chat: 
-    st.header("💬 AI Chat Assistant")
-    st.info("Ask questions and get real-time guidance from the AI assistant")
-    
-    # Initialize chat history
-    if "chat_history" not in st. session_state:
-        st. session_state.chat_history = []
-    
-    # Display chat history
-    for msg in st.session_state.chat_history: 
-        role = msg. get("role", "user")
-        content = msg.get("content", "")
-        with st.chat_message(role):
-            st.write(content)
-    
-    # Chat input
-    user_message = st.chat_input("Type your message here...")
-    
-    if user_message:
-        # Add user message to history
-        st.session_state. chat_history.append({"role": "user", "content": user_message})
-        
-        # Display user message
-        with st.chat_message("user"):
-            st.write(user_message)
-        
-        # Prepare data for JamAI
-        chat_data = {"chat":  user_message}
-        
-        # Get AI response
-        with st.spinner("Thinking..."):
-            try:
-                if jamai_client:
-                    response = add_table_row(TABLE_IDS["chat"], chat_data)
-                    data = parse_response_data(response)
+            # Option to get additional resources
+            if st.button("📚 Get Additional Resources"):
+                with st.spinner("Loading resources..."):
+                    resources_prompt = f"""Provide 3-5 reliable resources, hotlines, and organizations 
+                    that specialize in {selected_emergency}. Include website URLs if available."""
                     
-                    # Extract assistant reply
-                    assistant_reply = (
-                        get_field_value(data, "assistant_reply") or
-                        get_field_value(data, "summary") or
-                        get_field_value(data, "description") or
-                        "I'm sorry, I couldn't generate a response."
+                    resources = client.messages.create(
+                        model="claude-3-5-sonnet-20241022",
+                        max_tokens=512,
+                        messages=[
+                            {"role": "user", "content": resources_prompt}
+                        ]
                     )
                     
-                    # Add to history
-                    st.session_state.chat_history.append({
-                        "role": "assistant",
-                        "content": assistant_reply
-                    })
-                    
-                    # Display assistant message
-                    with st.chat_message("assistant"):
-                        st.write(assistant_reply)
-                    
-                    # Debug info
-                    with st.expander("🔍 Debug Data"):
-                        st.write(response)
-                else:
-                    error_msg = "JamAI client not available.  Please configure credentials."
-                    st.session_state.chat_history.append({
-                        "role": "assistant",
-                        "content": error_msg
-                    })
-                    with st.chat_message("assistant"):
-                        st.error(error_msg)
-            except Exception as e:
-                error_msg = f"Error:  {e}"
-                st.session_state.chat_history.append({
-                    "role": "assistant",
-                    "content": error_msg
-                })
-                with st.chat_message("assistant"):
-                    st.error(error_msg)
+                    st.markdown("### 🔗 Additional Resources")
+                    st.markdown(resources.content[0].text)
+    
+    else:  # Self-Care Support
+        st.header("💝 Self-Care Support")
+        st.markdown("Describe what you're going through to receive personalized recommendations.")
+        
+        # Self-care concern input
+        concern = st.text_area(
+            "What are you dealing with? (Please be specific)",
+            placeholder="E.g., 'I've been feeling overwhelmed with work stress and anxiety...'",
+            height=100
+        )
+        
+        if st.button("💪 Get Self-Care Recommendations", use_container_width=True):
+            if concern.strip():
+                with st.spinner("🤖 Creating personalized recommendations..."):
+                    recommendations = get_self_care_recommendations(concern)
+                
+                st.markdown('<div class="self-care-box">', unsafe_allow_html=True)
+                st.markdown("### 🌟 Personalized Self-Care Plan")
+                st.markdown(recommendations)
+                st.markdown('</div>', unsafe_allow_html=True)
+                
+                # Tracking option
+                st.markdown("---")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    if st.button("✅ Mark as helpful"):
+                        st.success("Thank you for your feedback!")
+                with col2:
+                    if st.button("💾 Save recommendations"):
+                        st.info("Recommendations saved to your session!")
+                with col3:
+                    if st.button("🔄 Get different suggestions"):
+                        st.session_state['regenerate'] = True
+                        st.rerun()
+            else:
+                st.warning("Please describe what you're going through to receive personalized recommendations.")
 
-# =============================================================================
-# FOOTER
-# =============================================================================
-st. divider()
-st.caption("🚨 AERN - AI Emergency Response Navigator | Powered by Insomniac")
+if __name__ == "__main__":
+    main()
